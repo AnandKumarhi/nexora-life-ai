@@ -1,0 +1,341 @@
+import {
+  collection,
+  doc,
+  addDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  Unsubscribe,
+  Timestamp,
+} from 'firebase/firestore';
+import { db } from './firebase';
+import { Task, Goal, Habit } from '../utils/types';
+
+// ─── Collection names ─────────────────────────────────────────────
+const TASKS = 'tasks';
+const GOALS = 'goals';
+const HABITS = 'habits';
+
+// ─── Tasks ───────────────────────────────────────────────────────
+export const subscribeToTasks = (
+  userId: string,
+  onData: (tasks: Task[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe => {
+  const q = query(
+    collection(db, TASKS),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc')
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const tasks = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Task));
+      onData(tasks);
+    },
+    onError
+  );
+};
+
+export const createTask = async (task: Omit<Task, 'id'>): Promise<string> => {
+  const ref = await addDoc(collection(db, TASKS), task);
+  return ref.id;
+};
+
+export const updateTask = async (
+  taskId: string,
+  updates: Partial<Task>
+): Promise<void> => {
+  await updateDoc(doc(db, TASKS, taskId), updates as Record<string, unknown>);
+};
+
+export const deleteTask = async (taskId: string): Promise<void> => {
+  await deleteDoc(doc(db, TASKS, taskId));
+};
+
+// ─── Goals ───────────────────────────────────────────────────────
+export const subscribeToGoals = (
+  userId: string,
+  onData: (goals: Goal[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe => {
+  const q = query(
+    collection(db, GOALS),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'desc')
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const goals = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Goal));
+      onData(goals);
+    },
+    onError
+  );
+};
+
+export const createGoal = async (goal: Omit<Goal, 'id'>): Promise<string> => {
+  const ref = await addDoc(collection(db, GOALS), goal);
+  return ref.id;
+};
+
+export const updateGoal = async (
+  goalId: string,
+  updates: Partial<Goal>
+): Promise<void> => {
+  await updateDoc(doc(db, GOALS, goalId), updates as Record<string, unknown>);
+};
+
+export const deleteGoal = async (goalId: string): Promise<void> => {
+  await deleteDoc(doc(db, GOALS, goalId));
+};
+
+// ─── Habits ──────────────────────────────────────────────────────
+export const subscribeToHabits = (
+  userId: string,
+  onData: (habits: Habit[]) => void,
+  onError?: (err: Error) => void
+): Unsubscribe => {
+  const q = query(
+    collection(db, HABITS),
+    where('userId', '==', userId),
+    orderBy('createdAt', 'asc')
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      const habits = snap.docs.map((d) => ({ ...d.data(), id: d.id } as Habit));
+      onData(habits);
+    },
+    onError
+  );
+};
+
+export const createHabit = async (habit: Omit<Habit, 'id'>): Promise<string> => {
+  const ref = await addDoc(collection(db, HABITS), habit);
+  return ref.id;
+};
+
+export const updateHabit = async (
+  habitId: string,
+  updates: Partial<Habit>
+): Promise<void> => {
+  await updateDoc(doc(db, HABITS, habitId), updates as Record<string, unknown>);
+};
+
+export const deleteHabit = async (habitId: string): Promise<void> => {
+  await deleteDoc(doc(db, HABITS, habitId));
+};
+
+/**
+ * LocalStorage service — used as offline fallback when Firebase is unavailable.
+ * Keys are namespaced by userId so multiple accounts don't collide.
+ */
+
+const key = (userId: string, entity: string) => `nexora_${userId}_${entity}`;
+
+export function saveLocal<T>(userId: string, entity: string, data: T[]): void {
+  try {
+    localStorage.setItem(key(userId, entity), JSON.stringify(data));
+  } catch {
+    console.warn('[LocalStorage] Could not save', entity);
+  }
+}
+
+export function loadLocal<T>(userId: string, entity: string): T[] {
+  try {
+    const raw = localStorage.getItem(key(userId, entity));
+    return raw ? (JSON.parse(raw) as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearLocal(userId: string, entity: string): void {
+  try {
+    localStorage.removeItem(key(userId, entity));
+  } catch {}
+}
+
+// Chat history (per user)
+export function saveChatHistory(userId: string, messages: object[]): void {
+  try {
+    localStorage.setItem(`nexora_${userId}_chat`, JSON.stringify(messages));
+  } catch {}
+}
+
+export function loadChatHistory(userId: string): object[] {
+  try {
+    const raw = localStorage.getItem(`nexora_${userId}_chat`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Daily quote (per day so it doesn't flicker)
+export function saveDailyQuote(quote: string): void {
+  const today = new Date().toISOString().split('T')[0];
+  localStorage.setItem('nexora_daily_quote', JSON.stringify({ date: today, quote }));
+}
+
+export function loadDailyQuote(): string | null {
+  try {
+    const raw = localStorage.getItem('nexora_daily_quote');
+    if (!raw) return null;
+    const { date, quote } = JSON.parse(raw);
+    const today = new Date().toISOString().split('T')[0];
+    return date === today ? quote : null;
+  } catch {
+    return null;
+  }
+}
+
+import {
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  sendPasswordResetEmail,
+  updateProfile,
+  onAuthStateChanged,
+  User as FirebaseUser,
+} from 'firebase/auth';
+import { auth, googleProvider } from './firebase';
+
+export const signUpWithEmail = async (
+  email: string,
+  password: string,
+  displayName: string
+): Promise<FirebaseUser> => {
+  const cred = await createUserWithEmailAndPassword(auth, email, password);
+  await updateProfile(cred.user, { displayName });
+  return cred.user;
+};
+
+export const signInWithEmail = async (
+  email: string,
+  password: string
+): Promise<FirebaseUser> => {
+  const cred = await signInWithEmailAndPassword(auth, email, password);
+  return cred.user;
+};
+
+export const signInWithGoogle = async (): Promise<FirebaseUser> => {
+  const cred = await signInWithPopup(auth, googleProvider);
+  return cred.user;
+};
+
+export const signOutUser = async (): Promise<void> => {
+  await signOut(auth);
+};
+
+export const resetPassword = async (email: string): Promise<void> => {
+  await sendPasswordResetEmail(auth, email);
+};
+
+export const onAuthChange = (
+  callback: (user: FirebaseUser | null) => void
+) => onAuthStateChanged(auth, callback);
+
+import OpenAI from 'openai';
+import { ChatMessage } from '../utils/types';
+
+let _client: OpenAI | null = null;
+
+const getClient = (): OpenAI => {
+  if (!_client) {
+    const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
+    if (!apiKey) throw new Error('REACT_APP_OPENAI_API_KEY is not set');
+    _client = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+  }
+  return _client;
+};
+
+const SYSTEM_PROMPT = `You are Nexora, a warm and motivating AI life coach inside a premium productivity app.
+Your role is to help users build better habits, set and track goals, plan their day, and stay disciplined.
+Keep responses concise and actionable (2-4 short paragraphs max).
+Use occasional relevant emojis. Be encouraging, empathetic, and honest.
+When the user shares their tasks or goals, give specific, personalized advice.
+Never be preachy. Always be practical.`;
+
+export interface StreamCallbacks {
+  onChunk: (chunk: string) => void;
+  onDone: () => void;
+  onError: (err: Error) => void;
+}
+
+/**
+ * Send a message to GPT-4o with streaming response.
+ */
+export const sendMessageStream = async (
+  messages: ChatMessage[],
+  userName: string,
+  callbacks: StreamCallbacks
+): Promise<void> => {
+  const client = getClient();
+
+  const apiMessages = messages.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }));
+
+  try {
+    const stream = await client.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: `${SYSTEM_PROMPT}\nThe user's name is ${userName}.`,
+        },
+        ...apiMessages,
+      ],
+      max_tokens: 600,
+      temperature: 0.8,
+      stream: true,
+    });
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content ?? '';
+      if (delta) callbacks.onChunk(delta);
+    }
+    callbacks.onDone();
+  } catch (err) {
+    callbacks.onError(err instanceof Error ? err : new Error(String(err)));
+  }
+};
+
+/**
+ * Non-streaming fallback for environments where streaming isn't available.
+ */
+export const sendMessage = async (
+  messages: ChatMessage[],
+  userName: string
+): Promise<string> => {
+  const client = getClient();
+
+  const apiMessages = messages.map((m) => ({
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
+  }));
+
+  const res = await client.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [
+      {
+        role: 'system',
+        content: `${SYSTEM_PROMPT}\nThe user's name is ${userName}.`,
+      },
+      ...apiMessages,
+    ],
+    max_tokens: 600,
+    temperature: 0.8,
+  });
+
+  return res.choices[0]?.message?.content ?? 'I'm here to help you succeed! 💪';
+};
